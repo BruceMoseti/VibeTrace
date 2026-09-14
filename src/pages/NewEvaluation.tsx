@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { RunStep } from "../../shared/types";
-import { api, streamRun } from "../api";
+import { api, streamRun, type DemoInfo } from "../api";
 import { LiveConsole } from "../components/LiveConsole";
 
 const EXAMPLE_SPEC = `Users can create an account and log in.
@@ -17,12 +17,16 @@ export function NewEvaluation() {
   const [running, setRunning] = useState(false);
   const [steps, setSteps] = useState<RunStep[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [demo, setDemo] = useState<DemoInfo | null>(null);
   const cancelRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     api
       .demo()
-      .then((d) => setSpec((cur) => cur || d.spec))
+      .then((d) => {
+        setDemo(d);
+        setSpec((cur) => cur || d.spec);
+      })
       .catch(() => {});
     return () => cancelRef.current?.();
   }, []);
@@ -96,16 +100,16 @@ export function NewEvaluation() {
             <button
               className="btn"
               type="button"
-              disabled={running}
-              onClick={() => setTargetUrl(`${window.location.origin}/demo-app/v1`)}
+              disabled={running || !demo}
+              onClick={() => setTargetUrl(`${demo?.origin}/demo-app/v1`)}
             >
               Use bundled TaskFlow v1
             </button>
             <button
               className="btn"
               type="button"
-              disabled={running}
-              onClick={() => setTargetUrl(window.location.origin)}
+              disabled={running || !demo}
+              onClick={() => setTargetUrl(demo?.origin ?? "")}
             >
               Evaluate VibeTrace itself
             </button>

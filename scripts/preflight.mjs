@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import { access, constants, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveChromium } from "./find-chromium.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.PORT ?? 3000);
@@ -32,24 +33,20 @@ function checkDeps() {
 }
 
 async function checkBrowser() {
-  const override = process.env.CHROMIUM_PATH;
-  if (override && existsSync(override)) {
-    ok("Chromium", `using CHROMIUM_PATH (${override})`);
-    return;
-  }
-  try {
-    const { chromium } = await import("playwright");
-    if (existsSync(chromium.executablePath())) {
-      ok("Chromium", "installed — evaluations will run for real");
-    } else {
-      bad(
+  const { source, path } = await resolveChromium();
+  switch (source) {
+    case "env":
+      return ok("Chromium", `CHROMIUM_PATH → ${path}`);
+    case "playwright":
+      return ok("Chromium", "installed — evaluations will run for real");
+    case "system":
+      return ok("Chromium", `using this machine's browser → ${path}`);
+    default:
+      return bad(
         "Chromium",
-        "Playwright is installed but the browser binary is missing",
+        "no browser found, so runs would fall back to synthetic",
         "Run: npm run setup:browser",
       );
-    }
-  } catch {
-    bad("Chromium", "the playwright package is not installed", "Run: npm install");
   }
 }
 

@@ -91,7 +91,18 @@ async function realEvaluate(
       // Lets a host that already ships Chromium (Replit, most CI images) skip
       // Playwright's own download.
       executablePath: process.env.CHROMIUM_PATH || undefined,
-      args: ["--no-sandbox", "--disable-dev-shm-usage"],
+      // Tuned for small containers: no sandbox namespaces, no reliance on a
+      // large /dev/shm, and none of the background work a headless run has no
+      // use for.
+      args: [
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--disable-extensions",
+        "--disable-background-networking",
+        "--disable-renderer-backgrounding",
+        "--mute-audio",
+      ],
     });
   } catch (err) {
     recorder.emit(

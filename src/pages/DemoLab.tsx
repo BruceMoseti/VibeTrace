@@ -92,7 +92,7 @@ export function DemoLab() {
     setActiveVersion(version.version);
     consoleRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
     cancelRef.current = streamRun(
-      `${window.location.origin}${version.path}`,
+      `${info.origin}${version.path}`,
       info.spec,
       {
         onStep: (step) => setSteps((prev) => [...prev, step]),

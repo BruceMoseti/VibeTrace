@@ -7,6 +7,7 @@ import { spawnSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveChromium } from "./find-chromium.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = process.env.PORT ?? "3000";
@@ -28,42 +29,28 @@ if (!existsSync(resolve(root, "node_modules/express"))) {
   run("npm", ["install"]);
 }
 
-let chromiumPath = process.env.CHROMIUM_PATH ?? "";
+let { source, path: chromiumPath } = await resolveChromium();
 
-if (!chromiumPath) {
-  try {
-    const { chromium } = await import("playwright");
-    if (!existsSync(chromium.executablePath())) {
-      // Hosts like Replit already ship a Chromium; prefer it over a download.
-      chromiumPath = findSystemChromium();
-      if (chromiumPath) {
-        step(`Using the Chromium already on this machine (${chromiumPath})`);
-      } else {
-        step("Installing Chromium for Playwright (one time, ~100MB)");
-        const install = spawnSync("npx", ["playwright", "install", "chromium"], {
-          cwd: root,
-          stdio: "inherit",
-        });
-        if (install.status !== 0) {
-          console.warn(
-            "\n\x1b[33mChromium could not be installed.\x1b[0m Evaluations will fall back to\n" +
-              "the synthetic engine and be labelled as such. Everything else still works.\n",
-          );
-        }
-      }
-    }
-  } catch {
-    /* playwright is missing entirely; the server reports synthetic mode */
+if (source === "system") {
+  // Hosts like Replit already ship a Chromium. Using it skips a 100MB download
+  // on every fresh container.
+  step(`Using the Chromium already on this machine (${chromiumPath})`);
+} else if (source === "none") {
+  step("Installing Chromium for Playwright (one time, ~100MB)");
+  const install = spawnSync("npx", ["playwright", "install", "chromium"], {
+    cwd: root,
+    stdio: "inherit",
+  });
+  if (install.status !== 0) {
+    console.warn(
+      "\n\x1b[33mChromium could not be installed.\x1b[0m Evaluations will fall back to\n" +
+        "the synthetic engine and be labelled as such. Everything else still works.\n",
+    );
   }
 }
 
-function findSystemChromium() {
-  for (const name of ["chromium", "chromium-browser", "google-chrome", "google-chrome-stable"]) {
-    const found = spawnSync("which", [name], { encoding: "utf8" });
-    if (found.status === 0) return found.stdout.trim();
-  }
-  return "";
-}
+// Only forward an explicit path; Playwright finds its own download by itself.
+if (source === "playwright") chromiumPath = "";
 
 step("Building the dashboard");
 run("npm", ["run", "build"]);

@@ -18,6 +18,8 @@ export interface DemoVersionInfo {
 
 export interface DemoInfo {
   spec: string;
+  /** Where the evaluator should reach the app under test from. */
+  origin: string;
   versions: DemoVersionInfo[];
 }
 

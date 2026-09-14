@@ -21,6 +21,7 @@ import { compareRuns, runEvaluation } from "./service.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = Number(process.env.PORT ?? 3000);
+const LOCAL_ORIGIN = `http://127.0.0.1:${PORT}`;
 
 app.use(express.json({ limit: "8mb" }));
 
@@ -53,6 +54,11 @@ app.get("/api/demo/versions", (_req, res) => {
   const runs = listRunSummaries();
   res.json({
     spec: TASKFLOW_SPEC,
+    // The browser runs beside the server, so it reaches the app under test
+    // directly. On a host that serves the dashboard through a public proxy —
+    // Replit, Codespaces, a tunnel — going back in through that proxy would
+    // add its latency to every measurement.
+    origin: LOCAL_ORIGIN,
     versions: DEMO_VERSIONS.map((version) => {
       const path = `/demo-app/${version}`;
       const versionRuns = runs.filter((r) => r.targetUrl.endsWith(path));
@@ -164,11 +170,10 @@ if (existsSync(distDir)) {
   });
 }
 
-app.listen(PORT, () => {
-  const base = `http://localhost:${PORT}`;
-  console.log(`[vibetrace] listening on ${base}`);
-  console.log(`[vibetrace] app under test: ${base}/demo-app/v1`);
-  seedIfEmpty(base).catch((err) =>
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`[vibetrace] listening on http://localhost:${PORT}`);
+  console.log(`[vibetrace] app under test: ${LOCAL_ORIGIN}/demo-app/v1`);
+  seedIfEmpty(LOCAL_ORIGIN).catch((err) =>
     console.error("[vibetrace] seed error:", err),
   );
 });
