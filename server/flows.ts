@@ -342,7 +342,7 @@ const flows: Record<FlowId, (env: FlowEnv) => Promise<FlowResult>> = {
     const composer = await findComposer(page);
     if (!composer) {
       return (await isVisible(passwordField(page), 1000))
-        ? fail(`The app requires signing in before anything can be created, but the spec never described an account flow.`)
+        ? fail("The app requires signing in before anything can be created, but the spec never described an account flow.")
         : fail(`No field for entering a new ${subject} was found on the page.`);
     }
 
