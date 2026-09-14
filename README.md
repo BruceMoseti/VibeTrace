@@ -113,9 +113,11 @@ Environment:
 
 ### On Replit
 
-`.replit` and `replit.nix` are committed. Import the repo and press **Run**:
-it installs, finds a browser (the Nix-provided Chromium, if Playwright has none
-of its own), builds, and serves on port 3000.
+`.replit` and `replit.nix` are committed. Import the repo and press **Run**: it
+installs, uses the Nix-provided Chromium so there is no browser download,
+builds, and serves on port 3000. [REPLIT.md](REPLIT.md) covers importing,
+confirming real mode, deploying, and what to do when a container runs short of
+memory.
 
 ## API
 

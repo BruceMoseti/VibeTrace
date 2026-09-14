@@ -5,6 +5,11 @@ no external URLs. If the wifi dies mid-call, the demo still works.
 
 ---
 
+Demoing from a Repl rather than your laptop? Read
+[REPLIT.md](REPLIT.md) first, then come back here for the script.
+
+---
+
 ## 1. Ten minutes before the call
 
 ```bash
