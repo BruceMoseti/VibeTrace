@@ -13,6 +13,7 @@ export function App() {
         </div>
         <nav className="nav">
           <NavItem to="/" label="Dashboard" end />
+          <NavItem to="/demo" label="Demo Lab" />
           <NavItem to="/new" label="New Evaluation" />
           <NavItem to="/history" label="Run History" />
           <NavItem to="/compare" label="Compare Runs" />

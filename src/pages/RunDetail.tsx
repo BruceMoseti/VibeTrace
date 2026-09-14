@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { EvaluationRun } from "../../shared/types";
 import { api } from "../api";
+import { LiveConsole } from "../components/LiveConsole";
 import {
   Metric,
   ModeBadge,
@@ -69,7 +70,10 @@ export function RunDetail() {
         <div className="card">
           <h3 className="card-title">Metrics</h3>
           <div className="grid grid-metrics">
-            <Metric label="Median latency" value={fmtLatency(run.medianLatencyMs)} />
+            <Metric
+              label="Time-to-interactive"
+              value={fmtLatency(run.medianLatencyMs)}
+            />
             <Metric label="Tests passed" value={`${passed}/${run.tests.length}`} />
             <Metric label="Est. AI cost" value={`$${run.efficiency.estimatedAiCostUsd.toFixed(3)}`} />
             <Metric label="Reliability / $" value={run.efficiency.reliabilityPerDollar.toFixed(1)} />
@@ -106,14 +110,35 @@ export function RunDetail() {
         </div>
       </div>
 
+      {run.steps.length > 0 && (
+        <div className="card section-gap">
+          <h3 className="card-title">Browser session transcript</h3>
+          <LiveConsole steps={run.steps} running={false} height={360} />
+        </div>
+      )}
+
+      {run.tests.some((t) => t.screenshot) && (
+        <div className="card section-gap">
+          <h3 className="card-title">What the browser saw</h3>
+          <div className="filmstrip">
+            {run.tests
+              .filter((t) => t.screenshot)
+              .map((t) => (
+                <figure className={`frame ${t.status}`} key={t.id}>
+                  <img src={t.screenshot!} alt={t.description} loading="lazy" />
+                  <figcaption>
+                    <span className={`pill ${t.status}`}>{t.status.toUpperCase()}</span>
+                    {t.description}
+                  </figcaption>
+                </figure>
+              ))}
+          </div>
+        </div>
+      )}
+
       <div className="card section-gap">
         <h3 className="card-title">Original spec</h3>
-        <pre
-          className="mono"
-          style={{ whiteSpace: "pre-wrap", color: "var(--text-dim)", fontSize: 12.5, margin: 0 }}
-        >
-          {run.spec}
-        </pre>
+        <pre className="spec-block">{run.spec}</pre>
       </div>
     </div>
   );

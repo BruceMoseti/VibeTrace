@@ -88,10 +88,11 @@ export function Dashboard() {
 
       {latest.mode === "synthetic" && (
         <div className="banner">
-          This run used the <b>synthetic</b> evaluation engine (a live browser
-          could not reach the target, or Playwright browsers are not installed).
-          Metrics are deterministic and reproducible; wire in Playwright + a
-          reachable URL for fully real signals.
+          This run used the <b>synthetic</b> engine — no browser could reach the
+          target, so nothing here was observed. Results are deterministic for
+          this (url, spec, seed) so history stays coherent, but install a
+          browser with <span className="mono">npm run setup:browser</span> before
+          trusting a number.
         </div>
       )}
 
@@ -140,7 +141,7 @@ export function Dashboard() {
 
       <div className="grid grid-metrics section-gap">
         <Metric
-          label="Median workflow latency"
+          label="Median time-to-interactive"
           value={fmtLatency(latest.medianLatencyMs)}
           delta={
             previous

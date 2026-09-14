@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { App } from "./App";
 import { Dashboard } from "./pages/Dashboard";
+import { DemoLab } from "./pages/DemoLab";
 import { NewEvaluation } from "./pages/NewEvaluation";
 import { History } from "./pages/History";
 import { Compare } from "./pages/Compare";
@@ -15,6 +16,7 @@ const router = createBrowserRouter([
     element: <App />,
     children: [
       { index: true, element: <Dashboard /> },
+      { path: "demo", element: <DemoLab /> },
       { path: "new", element: <NewEvaluation /> },
       { path: "history", element: <History /> },
       { path: "compare", element: <Compare /> },

@@ -699,3 +699,257 @@ a {
 .note-line:last-child {
   border-bottom: none;
 }
+
+/* Demo lab */
+.grid-3 {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle input {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
+.spec-block {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+.steps-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.steps-list li {
+  margin-bottom: 8px;
+}
+
+.version-card {
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.15s ease;
+}
+
+.version-card.active {
+  border-color: var(--accent-dim);
+  box-shadow: 0 0 0 1px rgba(51, 214, 159, 0.18);
+}
+
+.version-tag {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--purple);
+  background: rgba(167, 139, 250, 0.12);
+  border: 1px solid rgba(167, 139, 250, 0.28);
+  border-radius: 6px;
+  padding: 3px 9px;
+}
+
+.version-score {
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.version-label {
+  font-weight: 600;
+  font-size: 14.5px;
+  margin: 12px 0 4px;
+}
+
+.version-summary {
+  color: var(--text-dim);
+  font-size: 13px;
+  min-height: 38px;
+}
+
+.answer-key {
+  margin-top: 12px;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 10px;
+}
+
+.answer-key summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-faint);
+  font-family: var(--mono);
+}
+
+.answer-key summary:hover {
+  color: var(--text-dim);
+}
+
+.answer-key ul {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  color: var(--danger);
+}
+
+.answer-key li {
+  margin-bottom: 5px;
+}
+
+/* Live browser-session console */
+.console {
+  background: #070a0d;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  overflow-y: auto;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.console-empty {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.console-line {
+  display: flex;
+  gap: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.console-time {
+  color: #3c4854;
+  flex: none;
+  width: 48px;
+  text-align: right;
+}
+
+.console-glyph {
+  flex: none;
+  width: 10px;
+}
+
+.console-msg {
+  flex: 1;
+}
+
+.console-line.lvl-info {
+  color: var(--text-dim);
+}
+
+.console-line.lvl-action {
+  color: var(--info);
+}
+
+.console-line.lvl-test {
+  color: var(--text);
+  font-weight: 600;
+  margin-top: 6px;
+}
+
+.console-line.lvl-good {
+  color: var(--accent);
+}
+
+.console-line.lvl-bad {
+  color: var(--danger);
+}
+
+.console-line.lvl-warn {
+  color: var(--warn);
+}
+
+.console-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 14px;
+  background: var(--accent);
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+/* Evidence filmstrip */
+.filmstrip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.frame {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-elev-2);
+}
+
+.frame.fail {
+  border-color: rgba(255, 92, 108, 0.35);
+}
+
+.frame img {
+  width: 100%;
+  display: block;
+  border-bottom: 1px solid var(--border);
+}
+
+.frame figcaption {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* Presenter notes */
+.notes-card {
+  border-left: 3px solid var(--purple);
+}
+
+.note-beat {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.note-beat:last-of-type {
+  border-bottom: none;
+}
+
+.note-when {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--purple);
+  margin-bottom: 4px;
+}
+
+.note-say {
+  font-size: 13.5px;
+  color: var(--text);
+}
