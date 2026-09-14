@@ -1,4 +1,4 @@
-run = "npm run build && npm start"
+run = "npm run demo"
 entrypoint = "server/index.ts"
 modules = ["nodejs-22"]
 
@@ -7,7 +7,7 @@ channel = "stable-24_05"
 
 [deployment]
 run = ["sh", "-c", "npm run build && npm start"]
-build = ["sh", "-c", "npm install && npm run build"]
+build = ["sh", "-c", "npm install && npx playwright install chromium || true"]
 deploymentTarget = "cloudrun"
 
 [env]
