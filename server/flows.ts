@@ -39,6 +39,7 @@ export interface Observations {
 export interface FlowMemory {
   credentials: { email: string; password: string };
   loggedIn: boolean;
+  /** Set once a login journey has actually seen a login screen. */
   hasLoginUi: boolean;
   probeTitle: string | null;
   loadSamples: number[];
@@ -175,26 +176,39 @@ async function findDeleteControl(row: Locator): Promise<Locator | null> {
   return null;
 }
 
-async function internalNavLinks(page: Page): Promise<Locator[]> {
+interface NavLink {
+  locator: Locator;
+  href: string;
+}
+
+async function internalNavLinks(page: Page): Promise<NavLink[]> {
   const scoped = page.locator(
     "nav a[href], header a[href], [role='navigation'] a[href], aside a[href]",
   );
   const source = (await scoped.count()) > 0 ? scoped : page.locator("a[href]");
   const total = Math.min(await source.count(), 10);
-  const out: Locator[] = [];
+  const out: NavLink[] = [];
   const seen = new Set<string>();
 
   for (let i = 0; i < total; i++) {
-    const link = source.nth(i);
-    const href = (await link.getAttribute("href")) ?? "";
+    const locator = source.nth(i);
+    const href = (await locator.getAttribute("href")) ?? "";
     if (!href || href.startsWith("mailto:") || href.startsWith("tel:")) continue;
     if (/^https?:\/\//i.test(href)) continue;
     if (href === "#" || seen.has(href)) continue;
-    if (!(await link.isVisible().catch(() => false))) continue;
+    if (!(await locator.isVisible().catch(() => false))) continue;
     seen.add(href);
-    out.push(link);
+    out.push({ locator, href });
   }
   return out;
+}
+
+function sameDestination(href: string, current: string): boolean {
+  try {
+    return new URL(href, current).href === current;
+  } catch {
+    return false;
+  }
 }
 
 async function mainText(page: Page): Promise<string> {
@@ -327,7 +341,9 @@ const flows: Record<FlowId, (env: FlowEnv) => Promise<FlowResult>> = {
     }
     const composer = await findComposer(page);
     if (!composer) {
-      return fail(`No field for entering a new ${subject} was found on the page.`);
+      return (await isVisible(passwordField(page), 1000))
+        ? fail(`The app requires signing in before anything can be created, but the spec never described an account flow.`)
+        : fail(`No field for entering a new ${subject} was found on the page.`);
     }
 
     const title = `VibeTrace probe ${Math.random().toString(36).slice(2, 7)}`;
@@ -443,21 +459,28 @@ const flows: Record<FlowId, (env: FlowEnv) => Promise<FlowResult>> = {
 
     const visited: string[] = [];
     const broken: string[] = [];
-    for (const link of links.slice(0, 3)) {
-      const label = ((await link.innerText().catch(() => "")) || "link").trim();
+    for (const { locator, href } of links.slice(0, 3)) {
+      const from = page.url();
+      // Clicking the link for the page you are already on proves nothing.
+      if (sameDestination(href, from)) continue;
+      const label = ((await locator.innerText().catch(() => "")) || "link").trim();
       const before = await mainText(page);
       env.log(`navigating to "${label}"`, "action");
-      await link.click({ timeout: 3000 }).catch(() => {});
+      await locator.click({ timeout: 3000 }).catch(() => {});
       await page.waitForLoadState("networkidle", { timeout: 4000 }).catch(() => {});
       await page.waitForTimeout(250);
       const after = await mainText(page);
-      if (after.length < 15) broken.push(`${label} (blank page)`);
-      else if (after === before && visited.length > 0) broken.push(`${label} (no change)`);
-      else visited.push(label);
+      if (after.length < 15) broken.push(`${label} (rendered a blank page)`);
+      else if (page.url() === from && after === before) {
+        broken.push(`${label} (nothing happened)`);
+      } else visited.push(label);
     }
 
     if (broken.length) {
       return fail(`Navigation failed for: ${broken.join(", ")}.`);
+    }
+    if (visited.length === 0) {
+      return fail("Every navigation link pointed back at the page already open.");
     }
     return pass(`Navigated ${visited.length} route(s) — ${visited.join(" → ")} — each rendering its own content.`);
   },
@@ -484,7 +507,10 @@ const flows: Record<FlowId, (env: FlowEnv) => Promise<FlowResult>> = {
     const medianMs =
       sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
     const worst = sorted[sorted.length - 1];
-    const summary = `median ${medianMs}ms across ${samples.length} loads, worst ${worst}ms, budget ${LOAD_BUDGET_MS}ms`;
+    const summary =
+      samples.length === 1
+        ? `${medianMs}ms on a single load, budget ${LOAD_BUDGET_MS}ms`
+        : `median ${medianMs}ms across ${samples.length} loads, worst ${worst}ms, budget ${LOAD_BUDGET_MS}ms`;
     return medianMs <= LOAD_BUDGET_MS
       ? pass(`The app became interactive inside its budget (${summary}).`)
       : fail(`The app was too slow to become interactive (${summary}).`);

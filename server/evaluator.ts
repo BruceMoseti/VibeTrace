@@ -150,7 +150,7 @@ async function realEvaluate(
           password: "vibetrace-probe-1234",
         },
         loggedIn: false,
-        hasLoginUi: true,
+        hasLoginUi: false,
         probeTitle: null,
         loadSamples: [],
         sessionRecoveries: 0,

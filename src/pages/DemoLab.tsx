@@ -58,6 +58,7 @@ export function DemoLab() {
     () => localStorage.getItem(PRESENTER_KEY) === "on",
   );
   const cancelRef = useRef<(() => void) | null>(null);
+  const consoleRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(() => {
     api.demo().then(setInfo).catch(() => setInfo(null));
@@ -89,6 +90,7 @@ export function DemoLab() {
     setError(null);
     setRunning(version.version);
     setActiveVersion(version.version);
+    consoleRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
     cancelRef.current = streamRun(
       `${window.location.origin}${version.path}`,
       info.spec,
@@ -231,7 +233,7 @@ export function DemoLab() {
         ))}
       </div>
 
-      <div className="card section-gap">
+      <div className="card section-gap" ref={consoleRef}>
         <div className="row spread" style={{ marginBottom: 12 }}>
           <h3 className="card-title" style={{ margin: 0 }}>
             {activeVersion

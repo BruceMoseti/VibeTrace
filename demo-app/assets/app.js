@@ -142,7 +142,7 @@ function renderLogin() {
         state.route = "/tasks";
         render();
         loadTasks();
-      } catch (err) {
+      } catch {
         state.authError = "Could not sign you in. Check your email and password.";
         render();
       }

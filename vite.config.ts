@@ -13,6 +13,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": "http://localhost:3001",
+      // The bundled app under test is served by Express, so it has to be
+      // reachable from the dev server too.
+      "/demo-app": "http://localhost:3001",
     },
   },
 });

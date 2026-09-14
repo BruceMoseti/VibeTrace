@@ -7,7 +7,6 @@ import {
   Metric,
   ModeBadge,
   ScoreGauge,
-  StatusPill,
   SubScore,
   fmtLatency,
 } from "../components/ui";
