@@ -1,4 +1,4 @@
-run = "npm run build && npm start"
+run = "npm run demo"
 entrypoint = "server/index.ts"
 modules = ["nodejs-22"]
 
@@ -6,13 +6,17 @@ modules = ["nodejs-22"]
 channel = "stable-24_05"
 
 [deployment]
-run = ["sh", "-c", "npm run build && npm start"]
-build = ["sh", "-c", "npm install && npm run build"]
-deploymentTarget = "cloudrun"
+build = ["sh", "-c", "npm install && npm run build && (npx playwright install chromium || true)"]
+run = ["sh", "-c", "npm start"]
+deploymentTarget = "autoscale"
 
 [env]
 NODE_ENV = "production"
 PORT = "3000"
+# Keep downloaded browsers inside node_modules so they survive the hop from a
+# deployment's build step to its run step. Ignored when replit.nix's Chromium
+# is used instead, which is the usual path.
+PLAYWRIGHT_BROWSERS_PATH = "0"
 
 [[ports]]
 localPort = 3000

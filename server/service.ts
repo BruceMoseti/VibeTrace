@@ -6,7 +6,7 @@ import type {
 import { clusterFailures } from "./clustering.js";
 import { evaluate, type EvaluateOptions } from "./evaluator.js";
 import { computeEfficiency, computeScores } from "./scoring.js";
-import { specToTests } from "./specToTests.js";
+import { detectSubject, specToTests } from "./specToTests.js";
 
 const TOTAL_CATEGORIES = 6;
 
@@ -16,7 +16,10 @@ export async function runEvaluation(
   opts: EvaluateOptions = {},
 ): Promise<Omit<EvaluationRun, "id">> {
   const tests = specToTests(spec);
-  const artifacts = await evaluate(targetUrl, spec, tests, opts);
+  const artifacts = await evaluate(targetUrl, spec, tests, {
+    subject: detectSubject(spec),
+    ...opts,
+  });
   const scores = computeScores(artifacts, TOTAL_CATEGORIES);
   const efficiency = computeEfficiency(artifacts, scores);
   const clusters = clusterFailures(artifacts.tests);
@@ -33,6 +36,7 @@ export async function runEvaluation(
     efficiency,
     tests: artifacts.tests,
     clusters,
+    steps: artifacts.steps,
   };
 }
 
@@ -61,6 +65,7 @@ export function compareRuns(
 
   const fixedTests: string[] = [];
   const regressedTests: string[] = [];
+  const stillFailing: CompareDelta["stillFailing"] = [];
   for (const [id, bTest] of bMap) {
     const aTest = aMap.get(id);
     if (!aTest) continue;
@@ -68,6 +73,11 @@ export function compareRuns(
       fixedTests.push(bTest.description);
     } else if (aTest.status === "pass" && bTest.status === "fail") {
       regressedTests.push(bTest.description);
+    } else if (aTest.status === "fail" && bTest.status === "fail") {
+      stillFailing.push({
+        description: bTest.description,
+        reasonChanged: aTest.detail !== bTest.detail,
+      });
     }
   }
 
@@ -86,6 +96,13 @@ export function compareRuns(
   const notes: string[] = [];
   for (const f of fixedTests) notes.push(`Fixed: ${f}`);
   for (const r of regressedTests) notes.push(`Regression: ${r}`);
+  for (const s of stillFailing) {
+    notes.push(
+      s.reasonChanged
+        ? `Still failing, for a different reason: ${s.description}`
+        : `Still failing: ${s.description}`,
+    );
+  }
   if (latencyDeltaPct < 0)
     notes.push(
       `Median latency improved ${Math.abs(latencyDeltaPct)}% (${a.medianLatencyMs}ms → ${b.medianLatencyMs}ms).`,
@@ -107,6 +124,7 @@ export function compareRuns(
     latencyDeltaPct,
     fixedTests,
     regressedTests,
+    stillFailing,
     newConsoleErrors,
     notes,
   };

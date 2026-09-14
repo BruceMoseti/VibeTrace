@@ -1,22 +1,29 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type {
   AcceptanceTest,
   ConsoleError,
   NetworkFailure,
+  RunStep,
+  StepLevel,
   TestResult,
 } from "../shared/types.js";
+import { runFlow, type FlowEnv, type FlowId, type Observations } from "./flows.js";
 
 export interface EvalArtifacts {
   mode: "real" | "synthetic";
   tests: TestResult[];
   consoleErrors: ConsoleError[];
   networkFailures: NetworkFailure[];
+  /** Median time-to-interactive across every page load in the session. */
   medianLatencyMs: number;
+  steps: RunStep[];
 }
 
 export interface EvaluateOptions {
   seed?: string;
   forceSynthetic?: boolean;
+  subject?: string;
+  onStep?: (step: RunStep) => void;
 }
 
 // Deterministic PRNG (mulberry32) so synthetic evaluations are reproducible for
@@ -42,10 +49,196 @@ function median(nums: number[]): number {
   return s.length % 2 ? s[mid] : Math.round((s[mid - 1] + s[mid]) / 2);
 }
 
-function syntheticScreenshot(
-  test: AcceptanceTest,
-  status: "pass" | "fail",
-): string {
+class StepRecorder {
+  readonly steps: RunStep[] = [];
+  private readonly started = Date.now();
+
+  constructor(private readonly onStep?: (step: RunStep) => void) {}
+
+  emit(message: string, level: StepLevel = "info"): void {
+    const step: RunStep = { t: Date.now() - this.started, level, message };
+    this.steps.push(step);
+    this.onStep?.(step);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Real evaluation — a browser actually using the app
+ * ------------------------------------------------------------------ */
+
+async function realEvaluate(
+  targetUrl: string,
+  tests: AcceptanceTest[],
+  recorder: StepRecorder,
+  subject: string,
+): Promise<EvalArtifacts | null> {
+  let chromium: typeof import("playwright").chromium;
+  try {
+    ({ chromium } = await import("playwright"));
+  } catch {
+    recorder.emit(
+      "Playwright is not installed — falling back to the synthetic engine.",
+      "warn",
+    );
+    return null;
+  }
+
+  let browser: import("playwright").Browser | null = null;
+  try {
+    recorder.emit("launching headless chromium", "info");
+    browser = await chromium.launch({
+      headless: true,
+      // Lets a host that already ships Chromium (Replit, most CI images) skip
+      // Playwright's own download.
+      executablePath: process.env.CHROMIUM_PATH || undefined,
+      // Tuned for small containers: no sandbox namespaces, no reliance on a
+      // large /dev/shm, and none of the background work a headless run has no
+      // use for.
+      args: [
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--disable-extensions",
+        "--disable-background-networking",
+        "--disable-renderer-backgrounding",
+        "--mute-audio",
+      ],
+    });
+  } catch (err) {
+    recorder.emit(
+      `Chromium could not start (${err instanceof Error ? err.message.split("\n")[0] : "unknown error"}) — falling back to the synthetic engine.`,
+      "warn",
+    );
+    if (browser) await (browser as import("playwright").Browser).close().catch(() => {});
+    return null;
+  }
+
+  try {
+    const context = await browser.newContext({
+      viewport: { width: 1200, height: 760 },
+    });
+    const page = await context.newPage();
+
+    const observations: Observations = { consoleErrors: [], networkFailures: [] };
+    page.on("console", (msg) => {
+      if (msg.type() === "error") {
+        observations.consoleErrors.push({ message: msg.text(), source: "console" });
+      }
+    });
+    page.on("pageerror", (err) => {
+      observations.consoleErrors.push({ message: err.message, source: "pageerror" });
+    });
+    page.on("requestfailed", (req) => {
+      const errorText = req.failure()?.errorText ?? "failed";
+      // Chromium reports ERR_ABORTED for requests the page itself cancelled and
+      // for empty-body responses the app handled fine. Blaming those on the
+      // app under test would manufacture failures the user never sees.
+      if (errorText.includes("ERR_ABORTED")) return;
+      observations.networkFailures.push({
+        url: req.url(),
+        status: errorText,
+        method: req.method(),
+      });
+    });
+    page.on("response", (res) => {
+      if (res.status() >= 400) {
+        observations.networkFailures.push({
+          url: res.url(),
+          status: res.status(),
+          method: res.request().method(),
+        });
+      }
+    });
+
+    const env: FlowEnv = {
+      page,
+      targetUrl,
+      subject,
+      observations,
+      memory: {
+        credentials: {
+          email: `vibetrace+${randomBytes(3).toString("hex")}@example.com`,
+          password: "vibetrace-probe-1234",
+        },
+        loggedIn: false,
+        hasLoginUi: false,
+        probeTitle: null,
+        loadSamples: [],
+        sessionRecoveries: 0,
+      },
+      log: (message, level = "info") => recorder.emit(`  ${message}`, level),
+    };
+
+    const results: TestResult[] = [];
+    for (const test of tests) {
+      recorder.emit(test.description, "test");
+      const started = Date.now();
+      const outcome = await runFlow(test.flowId as FlowId, env);
+      const latencyMs = Date.now() - started;
+
+      let screenshot: string | null = null;
+      try {
+        const buf = await page.screenshot({ type: "jpeg", quality: 45 });
+        screenshot = `data:image/jpeg;base64,${buf.toString("base64")}`;
+      } catch {
+        /* the page may be mid-navigation; evidence is best-effort */
+      }
+
+      recorder.emit(
+        `  ${outcome.status === "pass" ? "PASS" : "FAIL"} · ${outcome.detail}`,
+        outcome.status === "pass" ? "good" : "bad",
+      );
+
+      results.push({
+        id: test.id,
+        description: test.description,
+        category: test.category,
+        status: outcome.status,
+        latencyMs,
+        detail: outcome.detail,
+        screenshot,
+      });
+    }
+
+    if (env.memory.sessionRecoveries > 0) {
+      recorder.emit(
+        `had to sign in again ${env.memory.sessionRecoveries} time(s) mid-run to keep going`,
+        "warn",
+      );
+    }
+
+    await browser.close();
+    browser = null;
+
+    const loadMedian = median(env.memory.loadSamples);
+    recorder.emit(
+      `done — ${results.filter((r) => r.status === "pass").length}/${results.length} behaviours passed, median time-to-interactive ${loadMedian}ms`,
+      "info",
+    );
+
+    return {
+      mode: "real",
+      tests: results,
+      consoleErrors: dedupeConsole(observations.consoleErrors),
+      networkFailures: dedupeNetwork(observations.networkFailures).slice(0, 12),
+      medianLatencyMs: loadMedian,
+      steps: recorder.steps,
+    };
+  } catch (err) {
+    recorder.emit(
+      `The browser session ended unexpectedly: ${err instanceof Error ? err.message.split("\n")[0] : "unknown error"}`,
+      "warn",
+    );
+    if (browser) await browser.close().catch(() => {});
+    return null;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Synthetic fallback — deterministic, clearly labelled, never pretends
+ * ------------------------------------------------------------------ */
+
+function syntheticScreenshot(test: AcceptanceTest, status: "pass" | "fail"): string {
   const bg = status === "fail" ? "#2a1215" : "#0f1a17";
   const accent = status === "fail" ? "#ff5c6c" : "#33d69f";
   const label = status === "fail" ? "WORKFLOW FAILED" : "WORKFLOW OK";
@@ -64,7 +257,7 @@ function syntheticScreenshot(
     )}</text>
     <rect x="24" y="220" width="200" height="34" rx="6" fill="${accent}22" stroke="${accent}"/>
     <text x="40" y="243" fill="${accent}" font-family="monospace" font-size="15">${label}</text>
-    <text x="24" y="330" fill="#556" font-family="monospace" font-size="12">synthetic capture · playwright unavailable</text>
+    <text x="24" y="330" fill="#556" font-family="monospace" font-size="12">synthetic capture · no browser available</text>
   </svg>`;
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
@@ -105,7 +298,12 @@ const NETWORK_FAILURE_POOL: NetworkFailure[] = [
 function syntheticEvaluate(
   tests: AcceptanceTest[],
   seed: string,
+  recorder: StepRecorder,
 ): EvalArtifacts {
+  recorder.emit(
+    "running the synthetic engine — results are deterministic for this (url, spec, seed) and labelled as such",
+    "warn",
+  );
   const rng = makeRng(seed);
   const latencies: number[] = [];
 
@@ -120,10 +318,13 @@ function syntheticEvaluate(
             ? 0.22
             : 0.14;
     const status: "pass" | "fail" = rng() < baseFail ? "fail" : "pass";
-    const latency = Math.round(
-      450 + rng() * (status === "fail" ? 3200 : 1600),
-    );
+    const latency = Math.round(450 + rng() * (status === "fail" ? 3200 : 1600));
     latencies.push(latency);
+    recorder.emit(t.description, "test");
+    recorder.emit(
+      `  ${status === "pass" ? "PASS" : "FAIL"} · simulated`,
+      status === "pass" ? "good" : "bad",
+    );
     return {
       id: t.id,
       description: t.description,
@@ -132,9 +333,9 @@ function syntheticEvaluate(
       latencyMs: latency,
       detail:
         status === "pass"
-          ? "Flow completed and expected UI state was observed."
+          ? "Flow completed and the expected UI state was observed."
           : failureDetail(t.category),
-      screenshot: status === "fail" ? syntheticScreenshot(t, status) : null,
+      screenshot: syntheticScreenshot(t, status),
     };
   });
 
@@ -149,10 +350,7 @@ function syntheticEvaluate(
   }
 
   const networkFailures: NetworkFailure[] = [];
-  const nNet = Math.min(
-    NETWORK_FAILURE_POOL.length,
-    Math.round(failedCount * rng()),
-  );
+  const nNet = Math.min(NETWORK_FAILURE_POOL.length, Math.round(failedCount * rng()));
   for (let i = 0; i < nNet; i++) {
     networkFailures.push(NETWORK_FAILURE_POOL[Math.floor(rng() * NETWORK_FAILURE_POOL.length)]);
   }
@@ -163,19 +361,20 @@ function syntheticEvaluate(
     consoleErrors: dedupeConsole(consoleErrors),
     networkFailures: dedupeNetwork(networkFailures),
     medianLatencyMs: median(latencies),
+    steps: recorder.steps,
   };
 }
 
 function failureDetail(category: string): string {
   switch (category) {
     case "Authentication":
-      return "Login form submitted but session was not established; redirected back to /login.";
+      return "Login form submitted but the session was not established; redirected back to /login.";
     case "API Failure":
-      return "Backend responded with a non-2xx status; expected data never rendered.";
+      return "Backend responded with a non-2xx status; the expected data never rendered.";
     case "Data Persistence":
       return "State was lost after reload; the created record was not returned by the server.";
     case "Navigation":
-      return "Target route did not render; expected heading was not found within timeout.";
+      return "Target route did not render; the expected heading was not found within the timeout.";
     case "Performance":
       return "Workflow exceeded the latency budget before reaching a stable state.";
     default:
@@ -191,208 +390,31 @@ function dedupeConsole(items: ConsoleError[]): ConsoleError[] {
 
 function dedupeNetwork(items: NetworkFailure[]): NetworkFailure[] {
   const map = new Map<string, NetworkFailure>();
-  for (const i of items) map.set(`${i.method} ${i.url}`, i);
+  for (const i of items) map.set(`${i.method} ${i.url} ${i.status}`, i);
   return [...map.values()];
-}
-
-// Attempts a real, browser-driven evaluation with Playwright. Page load latency,
-// console errors, failed network requests and screenshots are REAL signals from
-// the target app. Per-test verdicts are heuristic DOM probes derived from those
-// real signals (executing arbitrary natural-language flows is out of MVP scope).
-async function realEvaluate(
-  targetUrl: string,
-  tests: AcceptanceTest[],
-): Promise<EvalArtifacts | null> {
-  let chromium: typeof import("playwright").chromium;
-  try {
-    ({ chromium } = await import("playwright"));
-  } catch {
-    return null;
-  }
-
-  let browser: import("playwright").Browser | null = null;
-  try {
-    browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({
-      viewport: { width: 1280, height: 720 },
-    });
-    const page = await context.newPage();
-
-    const consoleErrors: ConsoleError[] = [];
-    page.on("console", (msg) => {
-      if (msg.type() === "error") {
-        consoleErrors.push({ message: msg.text(), source: "console" });
-      }
-    });
-    page.on("pageerror", (err) => {
-      consoleErrors.push({ message: err.message, source: "pageerror" });
-    });
-
-    const networkFailures: NetworkFailure[] = [];
-    page.on("requestfailed", (req) => {
-      networkFailures.push({
-        url: req.url(),
-        status: req.failure()?.errorText ?? "failed",
-        method: req.method(),
-      });
-    });
-    page.on("response", (res) => {
-      if (res.status() >= 400) {
-        networkFailures.push({
-          url: res.url(),
-          status: res.status(),
-          method: res.request().method(),
-        });
-      }
-    });
-
-    const start = Date.now();
-    let loaded = true;
-    try {
-      await page.goto(targetUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: 20000,
-      });
-      // Let client-rendered (SPA) content settle so DOM probes reflect the
-      // actual interactive UI rather than an empty pre-hydration shell.
-      await page
-        .waitForLoadState("networkidle", { timeout: 5000 })
-        .catch(() => {});
-      await page.waitForTimeout(400);
-    } catch {
-      loaded = false;
-    }
-    const loadLatency = Date.now() - start;
-
-    let pageScreenshot: string | null = null;
-    let bodyText = "";
-    let inputCount = 0;
-    let buttonCount = 0;
-    let linkCount = 0;
-    if (loaded) {
-      try {
-        const buf = await page.screenshot({ type: "jpeg", quality: 55 });
-        pageScreenshot = `data:image/jpeg;base64,${buf.toString("base64")}`;
-        bodyText = (await page.locator("body").innerText()).toLowerCase();
-        inputCount = await page.locator("input, textarea").count();
-        buttonCount = await page.locator("button, [role=button]").count();
-        linkCount = await page.locator("a").count();
-      } catch {
-        /* best-effort DOM probe */
-      }
-    }
-
-    const latencies: number[] = [];
-    const results: TestResult[] = tests.map((t) => {
-      const probe = probeTest(t, {
-        loaded,
-        bodyText,
-        inputCount,
-        buttonCount,
-        linkCount,
-        hadNetworkFailure: networkFailures.length > 0,
-        loadLatency,
-      });
-      latencies.push(probe.latencyMs);
-      return {
-        id: t.id,
-        description: t.description,
-        category: t.category,
-        status: probe.status,
-        latencyMs: probe.latencyMs,
-        detail: probe.detail,
-        screenshot: probe.status === "fail" ? pageScreenshot : null,
-      };
-    });
-
-    await browser.close();
-    browser = null;
-
-    return {
-      mode: "real",
-      tests: results,
-      consoleErrors: dedupeConsole(consoleErrors),
-      networkFailures: dedupeNetwork(networkFailures).slice(0, 12),
-      medianLatencyMs: median(latencies),
-    };
-  } catch {
-    if (browser) await browser.close().catch(() => {});
-    return null;
-  }
-}
-
-interface ProbeContext {
-  loaded: boolean;
-  bodyText: string;
-  inputCount: number;
-  buttonCount: number;
-  linkCount: number;
-  hadNetworkFailure: boolean;
-  loadLatency: number;
-}
-
-function probeTest(
-  t: AcceptanceTest,
-  ctx: ProbeContext,
-): { status: "pass" | "fail"; latencyMs: number; detail: string } {
-  const latencyMs = Math.max(
-    120,
-    Math.round(ctx.loadLatency * (0.4 + Math.random() * 0.6)),
-  );
-  if (!ctx.loaded) {
-    return {
-      status: "fail",
-      latencyMs,
-      detail: "Target app did not load (navigation timed out or was unreachable).",
-    };
-  }
-  switch (t.category) {
-    case "Authentication": {
-      const hasAuth =
-        /log ?in|sign ?in|sign ?up|register|password|email/.test(ctx.bodyText) ||
-        ctx.inputCount >= 2;
-      return hasAuth
-        ? { status: "pass", latencyMs, detail: "Auth affordances detected (inputs / login copy present)." }
-        : { status: "fail", latencyMs, detail: "No login or registration affordances were found on the page." };
-    }
-    case "API Failure":
-      return ctx.hadNetworkFailure
-        ? { status: "fail", latencyMs, detail: "One or more network requests returned a non-2xx status." }
-        : { status: "pass", latencyMs, detail: "No failed network requests observed during load." };
-    case "Navigation":
-      return ctx.linkCount > 0
-        ? { status: "pass", latencyMs, detail: `Navigable links detected (${ctx.linkCount}).` }
-        : { status: "fail", latencyMs, detail: "No navigation links were rendered." };
-    case "UI Interaction":
-      return ctx.buttonCount > 0 || ctx.inputCount > 0 || ctx.linkCount > 0
-        ? {
-            status: "pass",
-            latencyMs,
-            detail: `Interactive controls detected (${ctx.buttonCount} buttons, ${ctx.inputCount} inputs, ${ctx.linkCount} links).`,
-          }
-        : { status: "fail", latencyMs, detail: "No interactive controls (buttons/inputs/links) were found." };
-    case "Performance":
-      return ctx.loadLatency < 3000
-        ? { status: "pass", latencyMs, detail: `Initial load was ${ctx.loadLatency}ms (within budget).` }
-        : { status: "fail", latencyMs, detail: `Initial load was ${ctx.loadLatency}ms (over 3s budget).` };
-    case "Data Persistence":
-    default:
-      return ctx.loadLatency < 6000
-        ? { status: "pass", latencyMs, detail: "Page reached a stable rendered state." }
-        : { status: "fail", latencyMs, detail: "Page did not reach a stable state within budget." };
-  }
 }
 
 export async function evaluate(
   targetUrl: string,
-  _spec: string,
+  spec: string,
   tests: AcceptanceTest[],
   opts: EvaluateOptions = {},
 ): Promise<EvalArtifacts> {
-  const seed = opts.seed ?? `${targetUrl}::${_spec}::${Date.now()}`;
+  const recorder = new StepRecorder(opts.onStep);
+  recorder.emit(
+    `spec parsed into ${tests.length} user-level behaviours to verify`,
+    "info",
+  );
+
   if (!opts.forceSynthetic) {
-    const real = await realEvaluate(targetUrl, tests);
+    const real = await realEvaluate(
+      targetUrl,
+      tests,
+      recorder,
+      opts.subject ?? "item",
+    );
     if (real) return real;
   }
-  return syntheticEvaluate(tests, seed);
+  const seed = opts.seed ?? `${targetUrl}::${spec}::${Date.now()}`;
+  return syntheticEvaluate(tests, seed, recorder);
 }

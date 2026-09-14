@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import type { CompareDelta, RunSummary } from "../../shared/types";
 import { api } from "../api";
 import { DeltaBadge, fmtDate, fmtLatency } from "../components/ui";
 
 export function Compare() {
+  const [params] = useSearchParams();
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [aId, setAId] = useState<number | null>(null);
   const [bId, setBId] = useState<number | null>(null);
@@ -11,9 +13,18 @@ export function Compare() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    const fromQuery = (key: string) => {
+      const n = Number(params.get(key));
+      return Number.isInteger(n) && n > 0 ? n : null;
+    };
     api.listRuns().then((r) => {
       setRuns(r);
-      if (r.length >= 2) {
+      const a = fromQuery("a");
+      const b = fromQuery("b");
+      if (a && b) {
+        setAId(a);
+        setBId(b);
+      } else if (r.length >= 2) {
         setAId(r[1].id);
         setBId(r[0].id);
       } else if (r.length === 1) {
@@ -21,7 +32,7 @@ export function Compare() {
         setBId(r[0].id);
       }
     });
-  }, []);
+  }, [params]);
 
   useEffect(() => {
     if (aId == null || bId == null) return;
@@ -102,14 +113,14 @@ export function Compare() {
               <DeltaBadge value={delta.reliabilityDelta} />
             </div>
             <div className="metric">
-              <div className="metric-label">Median latency</div>
+              <div className="metric-label">Time-to-interactive</div>
               <div className="metric-value">
                 {fmtLatency(delta.a.medianLatencyMs)} → {fmtLatency(delta.b.medianLatencyMs)}
               </div>
               <DeltaBadge value={delta.latencyDeltaPct} suffix="%" invert />
             </div>
             <div className="metric">
-              <div className="metric-label">Fixed tests</div>
+              <div className="metric-label">Fixed behaviours</div>
               <div className="metric-value" style={{ color: "var(--accent)" }}>
                 {delta.fixedTests.length}
               </div>
@@ -147,6 +158,7 @@ export function Compare() {
 function noteIcon(note: string): string {
   if (note.startsWith("Fixed")) return "✅";
   if (note.startsWith("Regression")) return "❌";
+  if (note.startsWith("Still failing")) return "➖";
   if (note.includes("improved")) return "⚡";
   if (note.includes("regressed")) return "🐢";
   if (note.includes("console error")) return "⚠️";

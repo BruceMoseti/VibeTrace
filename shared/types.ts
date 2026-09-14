@@ -12,6 +12,17 @@ export interface AcceptanceTest {
   id: string;
   description: string;
   category: FailureCategory;
+  /** The scripted user journey the evaluator runs to check this behaviour. */
+  flowId: string;
+}
+
+export type StepLevel = "info" | "action" | "good" | "bad" | "warn" | "test";
+
+export interface RunStep {
+  /** Milliseconds since the run started. */
+  t: number;
+  level: StepLevel;
+  message: string;
 }
 
 export interface TestResult {
@@ -69,6 +80,8 @@ export interface EvaluationRun {
   efficiency: Efficiency;
   tests: TestResult[];
   clusters: FailureCluster[];
+  /** Transcript of what the evaluator did, replayable in the run detail view. */
+  steps: RunStep[];
 }
 
 export interface RunSummary {
@@ -92,6 +105,8 @@ export interface CompareDelta {
   latencyDeltaPct: number;
   fixedTests: string[];
   regressedTests: string[];
+  /** Failing in both runs — with a note when the underlying reason changed. */
+  stillFailing: { description: string; reasonChanged: boolean }[];
   newConsoleErrors: number;
   notes: string[];
 }

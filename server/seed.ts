@@ -1,35 +1,53 @@
 import { countRuns, insertRun } from "./db.js";
+import { DEMO_VERSIONS, TASKFLOW_SPEC } from "./demoApp.js";
 import { runEvaluation } from "./service.js";
 
-// Seeds a coherent, realistic multi-version history for a demo "TaskFlow" app so
-// the product looks complete on first open and the Compare/History views tell a
-// real regression story. Uses fixed seeds so the numbers are stable and the
-// version-over-version narrative is intentional (v3 fixes tasks but regresses auth).
-const DEMO_URL = "https://taskflow-demo.example.app";
-const DEMO_SPEC = `A task manager where users can create an account and log in.
-Users can create a task, mark a task complete, and delete a task.
-Completed tasks should remain completed after a page refresh.
-There is a dashboard showing task metrics and users can navigate between pages.
-The app talks to a backend API to persist data.`;
+// Populates history by evaluating the three bundled TaskFlow versions, so the
+// dashboard, history and compare views are already telling a true story the
+// first time the app is opened — and so a live demo has a fallback if the
+// network, the browser, or the room decides to misbehave.
+//
+//   VIBETRACE_SEED=real       evaluate the bundled app for real (default)
+//   VIBETRACE_SEED=synthetic  skip the browser, use the deterministic engine
+//   VIBETRACE_SEED=off        start with an empty history
 
-const DEMO_SEEDS = [
-  "taskflow-v1-baseline",
-  "taskflow-v2-perf-pass",
-  "taskflow-v3-auth-regression",
-];
+let warming: Promise<void> | null = null;
 
-export async function seedIfEmpty(): Promise<void> {
+export async function seedIfEmpty(baseUrl: string): Promise<void> {
+  const mode = (process.env.VIBETRACE_SEED ?? "real").toLowerCase();
+  if (mode === "off") return;
   if (countRuns() > 0) return;
+  await warmDemoRuns(baseUrl, { forceSynthetic: mode === "synthetic" });
+}
 
-  let created = new Date(Date.now() - DEMO_SEEDS.length * 86_400_000);
-  for (const seed of DEMO_SEEDS) {
-    const run = await runEvaluation(DEMO_URL, DEMO_SPEC, {
-      seed,
-      forceSynthetic: true,
-    });
-    // Space the demo runs a day apart for a believable timeline.
-    created = new Date(created.getTime() + 86_400_000);
-    insertRun({ ...run, createdAt: created.toISOString() });
-  }
-  console.log(`[vibetrace] seeded ${DEMO_SEEDS.length} demo evaluation runs`);
+export function warmDemoRuns(
+  baseUrl: string,
+  opts: { forceSynthetic?: boolean } = {},
+): Promise<void> {
+  if (warming) return warming;
+  warming = (async () => {
+    console.log(
+      `[vibetrace] evaluating the bundled TaskFlow versions (${DEMO_VERSIONS.join(", ")})…`,
+    );
+    for (const version of DEMO_VERSIONS) {
+      const targetUrl = `${baseUrl}/demo-app/${version}`;
+      try {
+        const run = await runEvaluation(targetUrl, TASKFLOW_SPEC, {
+          seed: `taskflow-${version}`,
+          forceSynthetic: opts.forceSynthetic,
+        });
+        const id = insertRun(run);
+        const passed = run.tests.filter((t) => t.status === "pass").length;
+        console.log(
+          `[vibetrace]   ${version} → run #${id} · ${run.mode} · reliability ${run.scores.reliability} · ${passed}/${run.tests.length} behaviours passed`,
+        );
+      } catch (err) {
+        console.error(`[vibetrace]   ${version} failed to evaluate:`, err);
+      }
+    }
+    console.log("[vibetrace] demo history ready");
+  })().finally(() => {
+    warming = null;
+  });
+  return warming;
 }

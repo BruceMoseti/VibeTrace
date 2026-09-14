@@ -28,7 +28,8 @@ db.exec(`
     console_errors_json TEXT NOT NULL,
     network_failures_json TEXT NOT NULL,
     efficiency_json TEXT NOT NULL,
-    clusters_json TEXT NOT NULL
+    clusters_json TEXT NOT NULL,
+    steps_json TEXT NOT NULL DEFAULT '[]'
   );
 
   CREATE TABLE IF NOT EXISTS test_results (
@@ -45,16 +46,26 @@ db.exec(`
   );
 `);
 
+// Databases created before run transcripts existed are upgraded in place.
+const runColumns = db.prepare(`PRAGMA table_info(runs)`).all() as {
+  name: string;
+}[];
+if (!runColumns.some((c) => c.name === "steps_json")) {
+  db.exec(`ALTER TABLE runs ADD COLUMN steps_json TEXT NOT NULL DEFAULT '[]'`);
+}
+
 type RunInput = Omit<EvaluationRun, "id">;
 
 export function insertRun(run: RunInput): number {
   const insert = db.prepare(`
     INSERT INTO runs (
       target_url, spec, created_at, mode, scores_json, median_latency_ms,
-      console_errors_json, network_failures_json, efficiency_json, clusters_json
+      console_errors_json, network_failures_json, efficiency_json, clusters_json,
+      steps_json
     ) VALUES (
       @target_url, @spec, @created_at, @mode, @scores_json, @median_latency_ms,
-      @console_errors_json, @network_failures_json, @efficiency_json, @clusters_json
+      @console_errors_json, @network_failures_json, @efficiency_json, @clusters_json,
+      @steps_json
     )
   `);
 
@@ -75,6 +86,7 @@ export function insertRun(run: RunInput): number {
       network_failures_json: JSON.stringify(r.networkFailures),
       efficiency_json: JSON.stringify(r.efficiency),
       clusters_json: JSON.stringify(r.clusters),
+      steps_json: JSON.stringify(r.steps ?? []),
     });
     const runId = Number(info.lastInsertRowid);
     for (const t of r.tests) {
@@ -107,6 +119,7 @@ interface RunRow {
   network_failures_json: string;
   efficiency_json: string;
   clusters_json: string;
+  steps_json: string | null;
 }
 
 interface TestRow {
@@ -136,6 +149,7 @@ function hydrate(row: RunRow): EvaluationRun {
     networkFailures: JSON.parse(row.network_failures_json),
     efficiency: JSON.parse(row.efficiency_json),
     clusters: JSON.parse(row.clusters_json),
+    steps: JSON.parse(row.steps_json ?? "[]"),
     tests: tests.map(
       (t): TestResult => ({
         id: t.id,

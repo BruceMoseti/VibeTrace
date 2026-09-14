@@ -1,119 +1,120 @@
 import { createHash } from "node:crypto";
 import type { AcceptanceTest, FailureCategory } from "../shared/types.js";
+import { FLOW_IDS, type FlowId } from "./flows.js";
 
-// Converts a natural-language product spec into user-level acceptance tests.
+// Turns a natural-language product spec into the user-level behaviours worth
+// checking, and binds each one to the scripted browser journey that proves it.
 //
-// This is a deterministic, heuristic converter: it scans the spec for common
-// product capabilities and emits matching acceptance tests. It is intentionally
-// pluggable — swapping in an LLM here (spec -> tests) requires no changes to the
-// evaluator or storage layers, since both operate on the AcceptanceTest shape.
+// The mapping is a deterministic keyword pass rather than a model call. That is
+// a deliberate MVP boundary, not a shortcut in disguise: everything downstream
+// consumes AcceptanceTest, so swapping this file for an LLM that emits the same
+// shape changes nothing in the evaluator, scoring, or storage.
 
 interface Rule {
   keywords: RegExp;
+  flowId: FlowId;
   category: FailureCategory;
   template: (subject: string) => string;
 }
 
 const RULES: Rule[] = [
   {
-    keywords: /\b(sign\s?up|register|create an account|account|login|log in|sign in|auth)\b/i,
+    keywords: /\b(sign\s?up|register|create an account|account|log ?in|sign ?in|auth|password|credentials)\b/i,
+    flowId: "auth.login",
     category: "Authentication",
-    template: () => "User can create an account and log in successfully",
+    template: () => "User can create an account and log in",
   },
   {
-    keywords: /\b(log ?out|sign ?out)\b/i,
+    keywords: /\b(sign\s?up|register|account|log ?in|sign ?in|auth|session|logged ?in)\b/i,
+    flowId: "auth.session_persists",
     category: "Authentication",
-    template: () => "User can log out and the session is cleared",
+    template: () => "A signed-in user stays signed in after a page refresh",
   },
   {
-    keywords: /\b(create|add|new)\b.*\b(task|item|note|post|todo|project|record|entry)\b/i,
+    keywords: /\b(create|add|new|write|post)\b/i,
+    flowId: "item.create",
     category: "UI Interaction",
     template: (s) => `User can create a new ${s}`,
   },
   {
-    keywords: /\b(delete|remove)\b.*\b(task|item|note|post|todo|project|record|entry)\b/i,
-    category: "UI Interaction",
-    template: (s) => `User can delete an existing ${s}`,
-  },
-  {
-    keywords: /\b(complete|mark|toggle|check off|status)\b/i,
+    keywords: /\b(complete|completed|mark|toggle|check off|done|status|persist|save|refresh|reload|remain)\b/i,
+    flowId: "item.complete_persists",
     category: "Data Persistence",
-    template: () => "Completed items remain completed after a page refresh",
+    template: (s) => `A completed ${s} is still completed after a refresh`,
   },
   {
-    keywords: /\b(save|persist|store|database|remain|refresh)\b/i,
-    category: "Data Persistence",
-    template: () => "Created data persists across page reloads",
-  },
-  {
-    keywords: /\b(search|filter|sort)\b/i,
+    keywords: /\b(delete|remove|archive|trash)\b/i,
+    flowId: "item.delete",
     category: "UI Interaction",
-    template: () => "User can search or filter the list of items",
+    template: (s) => `User can delete a ${s}`,
   },
   {
-    keywords: /\b(dashboard|chart|metric|graph|report|analytics)\b/i,
+    keywords: /\b(navigate|navigation|page|route|link|menu|tab|dashboard|view|screen)\b/i,
+    flowId: "nav.primary",
     category: "Navigation",
-    template: () => "Dashboard renders its primary metrics without errors",
+    template: () => "User can navigate between the app's main pages",
   },
   {
-    keywords: /\b(api|endpoint|fetch|request|integration)\b/i,
+    keywords: /\b(api|endpoint|backend|server|fetch|request|database|persist|store|integration)\b/i,
+    flowId: "api.health",
     category: "API Failure",
-    template: () => "Core API requests return successful responses",
-  },
-  {
-    keywords: /\b(navigate|page|route|link|menu|tab)\b/i,
-    category: "Navigation",
-    template: () => "Primary navigation between pages works correctly",
+    template: () => "Requests to the backend all succeed",
   },
 ];
 
-function detectSubject(spec: string): string {
+// Every app is expected to load and to be usable at speed, whether or not the
+// spec thought to say so.
+const ALWAYS: { flowId: FlowId; category: FailureCategory; description: string }[] = [
+  {
+    flowId: "app.loads",
+    category: "Navigation",
+    description: "Application loads and renders without a fatal error",
+  },
+  {
+    flowId: "perf.load",
+    category: "Performance",
+    description: "App becomes interactive within the latency budget",
+  },
+];
+
+export function detectSubject(spec: string): string {
   const m = spec.match(
-    /\b(task|item|note|post|todo|project|record|entry|product|message)\b/i,
+    /\b(task|item|note|post|todo|project|record|entry|product|message|event|contact)\b/i,
   );
   return m ? m[1].toLowerCase() : "item";
 }
 
 export function specToTests(spec: string): AcceptanceTest[] {
   const subject = detectSubject(spec);
-  const seen = new Set<string>();
-  const tests: AcceptanceTest[] = [];
+  const byFlow = new Map<FlowId, AcceptanceTest>();
+
+  const add = (flowId: FlowId, category: FailureCategory, description: string) => {
+    if (byFlow.has(flowId)) return;
+    byFlow.set(flowId, {
+      id: shortId(`${flowId}:${description}`),
+      description,
+      category,
+      flowId,
+    });
+  };
 
   for (const rule of RULES) {
     if (rule.keywords.test(spec)) {
-      const description = rule.template(subject);
-      if (seen.has(description)) continue;
-      seen.add(description);
-      tests.push({
-        id: shortId(description),
-        description,
-        category: rule.category,
-      });
+      add(rule.flowId, rule.category, rule.template(subject));
     }
   }
+  for (const base of ALWAYS) add(base.flowId, base.category, base.description);
 
-  // Always guarantee baseline coverage even for terse specs.
-  const baseline: AcceptanceTest[] = [
-    {
-      id: shortId("app loads"),
-      description: "Application loads without a fatal error",
-      category: "Navigation",
-    },
-    {
-      id: shortId("core action"),
-      description: "The primary user workflow completes end-to-end",
-      category: "UI Interaction",
-    },
-  ];
-  for (const b of baseline) {
-    if (!seen.has(b.description)) {
-      seen.add(b.description);
-      tests.push(b);
-    }
+  // A spec too terse to match anything still deserves a usable smoke suite.
+  if (byFlow.size <= ALWAYS.length) {
+    add("item.create", "UI Interaction", `User can create a new ${subject}`);
+    add("nav.primary", "Navigation", "User can navigate between the app's main pages");
+    add("api.health", "API Failure", "Requests to the backend all succeed");
   }
 
-  // Keep MVP focused: 3-8 acceptance tests.
-  return tests.slice(0, 8);
+  return FLOW_IDS.map((id) => byFlow.get(id)).filter(
+    (t): t is AcceptanceTest => Boolean(t),
+  );
 }
 
 function shortId(input: string): string {
